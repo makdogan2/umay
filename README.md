@@ -35,5 +35,6 @@ python sample.py          # generate text
 
 - [x] UMAY-0 — character-level, from scratch
 - [ ] Custom BPE tokenizer trained on the mixed corpus
+  -[x] Merge algorithm from scratch (2.43x compression at 1k merges)
 - [ ] Longer training, LR schedule, `torch.compile`
 - [ ] UMAY-1 — a conversational assistant
