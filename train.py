@@ -1,23 +1,32 @@
-import torch, time
+import torch, time, math
 from pathlib import Path
+from tokenizers import Tokenizer
 from model import Config, UMAY0
 
-KOK = Path(__file__).parent
-d = torch.load(KOK / "data" / "char.pt", weights_only=False)
+ROOT = Path(__file__).parent
+d = torch.load(ROOT / "data" / "bpe.pt", weights_only=False)
 train_data, val_data = d["train"], d["val"]
-itos = d["itos"]
+tok = Tokenizer.from_file(str(ROOT / "data" / "bpe_8192.json"))
 
 cfg = Config()
-cfg.vocab_size = len(d["stoi"])
+cfg.vocab_size = d["vocab_size"]
 
 batch_size = 64
-max_iters  = 5000
+max_iters  = 8000
+warmup     = 200
 eval_every = 500
-lr         = 3e-4
+max_lr     = 6e-4
+min_lr     = 6e-5
 device     = "cuda"
 
 torch.manual_seed(1337)
 torch.set_float32_matmul_precision("high")
+
+def get_lr(it):
+    if it < warmup:                                  # linear warmup
+        return max_lr * (it + 1) / warmup
+    ratio = (it - warmup) / (max_iters - warmup)     # cosine decay
+    return min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * ratio))
 
 def get_batch(split):
     data = train_data if split == "train" else val_data
@@ -27,30 +36,38 @@ def get_batch(split):
     return x.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
 @torch.no_grad()
-def olc():
+def estimate_loss():
     model.eval()
     out = {}
     for split in ("train", "val"):
-        kayiplar = torch.zeros(50)
+        losses = torch.zeros(50)
         for i in range(50):
             X, Y = get_batch(split)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = model(X, Y)
-            kayiplar[i] = loss.item()
-        out[split] = kayiplar.mean().item()
+            losses[i] = loss.item()
+        out[split] = losses.mean().item()
     model.train()
     return out
 
 model = UMAY0(cfg).to(device)
-print("parametre:", sum(p.numel() for p in model.parameters()) / 1e6, "M")
+n_params = sum(p.numel() for p in model.parameters())
+print(f"parameters: {n_params/1e6:.2f}M")
+print(f"tokens seen at end: {max_iters*batch_size*cfg.block_size/1e6:.0f}M "
+      f"({max_iters*batch_size*cfg.block_size/len(train_data):.1f} epochs)")
 
-opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)
+opt = torch.optim.AdamW(model.parameters(), lr=max_lr, betas=(0.9, 0.95), weight_decay=0.1)
 
 t0 = time.time()
 for it in range(max_iters + 1):
+    lr = get_lr(it)
+    for group in opt.param_groups:
+        group["lr"] = lr
+
     if it % eval_every == 0:
-        l = olc()
-        print(f"adım {it:5d} | train {l['train']:.4f} | val {l['val']:.4f} | {time.time()-t0:.0f}s")
+        l = estimate_loss()
+        print(f"step {it:5d} | train {l['train']:.4f} | val {l['val']:.4f} "
+              f"| lr {lr:.1e} | {time.time()-t0:.0f}s")
 
     X, Y = get_batch("train")
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -60,9 +77,15 @@ for it in range(max_iters + 1):
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     opt.step()
 
-torch.save({"model": model.state_dict(), "cfg": cfg.__dict__}, KOK / "umay0.pt")
+ckpt = ROOT / "umay0_bpe.pt"
+tmp = ckpt.with_suffix(".tmp")
+torch.save({"model": model.state_dict(),
+            "config": {k: v for k, v in vars(Config).items() if not k.startswith("_")}},
+           tmp)
+tmp.replace(ckpt)
+print("saved:", ckpt.name)
 
-baslangic = torch.zeros((1, 1), dtype=torch.long, device=device)
-uretim = model.generate(baslangic, 500, temperature=0.8, top_k=40)[0].tolist()
-print("\n--- UMAY konuşuyor ---")
-print("".join(itos[i] for i in uretim))
+start = torch.zeros((1, 1), dtype=torch.long, device=device)
+out = model.generate(start, 300, temperature=0.8, top_k=50)[0].tolist()
+print("\n--- UMAY speaks ---")
+print(tok.decode(out))

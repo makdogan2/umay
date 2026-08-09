@@ -2,7 +2,7 @@ from datasets import load_dataset
 from tqdm import tqdm
 import random, os
 
-HEDEF = {"tr": 12_000_000, "en": 8_000_000}   # bayt -> 60/40 oranı
+HEDEF = {"tr": 120_000_000, "en": 80_000_000}   # 200 MB
 
 def topla(dil, hedef):
     ds = load_dataset("wikimedia/wikipedia", f"20231101.{dil}",
@@ -24,7 +24,12 @@ random.seed(42)
 random.shuffle(belgeler)              # iki dili belge seviyesinde karıştır
 
 os.makedirs("data", exist_ok=True)
-with open("data/karisik.txt", "w", encoding="utf-8") as f:
+with open("data/mix.txt", "w", encoding="utf-8") as f:
     f.write("\n\n".join(belgeler))
 
-print("bitti:", os.path.getsize("data/karisik.txt") / 1e6, "MB")
+print("bitti:", os.path.getsize("data/mix.txt") / 1e6, "MB")
+
+if os.path.exists("data/mix.txt"):
+    print("mix.txt zaten var, indirme atlandı")
+else:
+    ...

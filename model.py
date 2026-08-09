@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 
 class Config:
-    vocab_size = 128
+    vocab_size = 8192
     block_size = 256      # modelin geriye bakabildiği karakter sayısı
     n_embd     = 384      # her karakterin vektör boyutu
     n_head     = 6
@@ -77,6 +77,7 @@ class UMAY0(nn.Module):
         self.ln_f    = nn.LayerNorm(cfg.n_embd)
         self.head    = nn.Linear(cfg.n_embd, cfg.vocab_size, bias=False)
         self.apply(self._init)
+        self.head.weight = self.tok_emb.weight   # weight tying
 
     def _init(self, m):
         if isinstance(m, nn.Linear):
